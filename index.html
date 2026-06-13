@@ -14,7 +14,6 @@
   #glcanvas{width:100%;height:100%;object-fit:cover;display:block}
   video{display:none}
 
-  /* ---- top bar ---- */
   .topbar{position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;
     align-items:center;padding:calc(env(safe-area-inset-top) + 10px) 14px 8px;z-index:5}
   .tb-group{display:flex;gap:10px}
@@ -24,13 +23,15 @@
   .tbtn svg{width:21px;height:21px;stroke:#fff;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
   .tbtn.on{background:rgba(255,79,139,.85)}
 
-  /* ---- compare (長押しで元画像) ---- */
   #compareBtn{position:absolute;right:14px;top:44%;width:46px;height:46px;border-radius:50%;
     background:rgba(0,0,0,.38);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
     color:#fff;display:flex;align-items:center;justify-content:center;z-index:5;user-select:none;-webkit-user-select:none;touch-action:none}
   #compareBtn svg{width:22px;height:22px;stroke:#fff;fill:none;stroke-width:1.8;stroke-linecap:round}
 
-  /* ---- bottom sheet ---- */
+  #hint{position:absolute;left:50%;transform:translateX(-50%);bottom:42%;z-index:5;
+    background:rgba(0,0,0,.62);color:#fff;font-size:12.5px;padding:8px 16px;border-radius:18px;
+    display:none;white-space:nowrap;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+
   #sheet{position:absolute;left:0;right:0;bottom:0;background:#fff;border-radius:22px 22px 0 0;
     padding-bottom:calc(env(safe-area-inset-bottom) + 6px);z-index:6;box-shadow:0 -6px 24px rgba(0,0,0,.25)}
   .tabs{display:flex;justify-content:center;gap:38px;padding:14px 0 8px}
@@ -71,7 +72,6 @@
   #shutter:active{transform:scale(.92)}
   #shutter svg{width:30px;height:30px}
 
-  /* ---- overlays ---- */
   .overlay{position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:20;display:flex;flex-direction:column;
     align-items:center;justify-content:center;gap:18px;color:#fff;text-align:center;padding:28px}
   .bigbtn{display:inline-block;padding:14px 36px;border-radius:28px;text-decoration:none;
@@ -112,6 +112,7 @@
     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17"/></svg>
   </button>
 
+  <div id="hint"></div>
   <div id="count"></div>
   <div id="flash"></div>
 
@@ -145,22 +146,19 @@
   </div>
 </div>
 
-<!-- 起動 -->
 <div class="overlay" id="start">
   <h1>美肌カメラ</h1>
   <p class="note">広告なし・データはすべて端末内で処理されます</p>
   <button class="bigbtn" id="startBtn">カメラを起動</button>
-  <p class="note">※チャット内のプレビューではカメラ権限がブロックされる場合があります。<br>その場合はこのHTMLを保存して直接開いてください。</p>
+  <p class="note">※変形補正（デカ目・小顔・輪郭）には顔認識ライブラリの読み込みにネット接続が必要です。<br>チャット内プレビューでは権限がブロックされる場合があるので、HTMLを保存して直接開いてください。</p>
 </div>
 
-<!-- エラー -->
 <div class="overlay" id="err">
   <h1>カメラを起動できませんでした</h1>
   <div class="box" id="errMsg"></div>
   <button class="ghost" id="retryBtn">もう一度試す</button>
 </div>
 
-<!-- 撮影プレビュー -->
 <div class="overlay" id="modal">
   <img id="photo" alt="撮影した写真">
   <div class="mrow">
@@ -188,7 +186,10 @@ uniform sampler2D u_tex;
 uniform vec2 u_texel;
 uniform float u_smooth,u_white,u_tone,u_sharp;
 uniform float u_bright,u_contrast,u_sat,u_temp,u_vig,u_fade;
-uniform float u_flip,u_bypass;
+uniform float u_flip,u_bypass,u_aspect;
+uniform vec4 u_warpCD[8];   // xy=中心(uv), zw=変位(uv)
+uniform float u_warpR[8];   // 影響半径(アスペクト補正空間)
+uniform vec4 u_eye[2];      // xy=中心(uv), z=半径, w=強さ
 
 float luma(vec3 c){return dot(c,vec3(0.299,0.587,0.114));}
 float skinMask(vec3 c){
@@ -196,15 +197,54 @@ float skinMask(vec3 c){
   m *= 1.0 - smoothstep(0.92,1.0,luma(c));
   return clamp(m*1.7,0.0,1.0);
 }
+
+// 顔の変形（インタラクティブ・イメージワープ）
+vec2 applyWarp(vec2 uv){
+  vec2 asp = vec2(u_aspect, 1.0);
+  // 輪郭スリム / 小顔（引っ張り変形）
+  for(int i=0;i<8;i++){
+    vec2 C = u_warpCD[i].xy;
+    vec2 disp = u_warpCD[i].zw;
+    vec2 M = C + disp;
+    vec2 d = (uv - M) * asp;
+    float dist2 = dot(d,d);
+    float r2 = u_warpR[i]*u_warpR[i];
+    if(dist2 < r2){
+      vec2 da = disp * asp;
+      float w = (r2 - dist2) / (r2 - dist2 + dot(da,da) + 1e-6);
+      w = w*w;
+      uv -= w * disp;
+    }
+  }
+  // デカ目（拡大変形）
+  for(int i=0;i<2;i++){
+    vec2 C = u_eye[i].xy;
+    float R = u_eye[i].z;
+    float s = u_eye[i].w;
+    vec2 dd = (uv - C) * asp;
+    float r = length(dd);
+    if(r < R && s > 0.0){
+      float t = 1.0 - smoothstep(0.0, R, r);   // 中心1 → 端0
+      float scale = 1.0 - s * t;               // 中心ほど内側を参照＝拡大
+      dd *= scale;
+      uv = C + dd / asp;
+    }
+  }
+  return uv;
+}
+
 void main(){
   vec2 uv = v_uv;
   if(u_flip>0.5) uv.x = 1.0-uv.x;
+  if(u_bypass>0.5){ gl_FragColor = vec4(texture2D(u_tex,uv).rgb,1.0); return; }
+
+  uv = applyWarp(uv);
+
   vec3 src = texture2D(u_tex,uv).rgb;
-  if(u_bypass>0.5){ gl_FragColor = vec4(src,1.0); return; }
   vec3 col = src;
   float mask = skinMask(src);
 
-  /* 肌磨き: 色差で重み付けするバイラテラル風スムージング */
+  /* 肌磨き */
   if(u_smooth>0.003){
     float rad = mix(1.5,4.5,u_smooth);
     vec3 sum = src; float wsum = 1.0;
@@ -213,8 +253,8 @@ void main(){
       vec2 dir = vec2(cos(a),sin(a));
       for(int j=1;j<=2;j++){
         vec3 s = texture2D(u_tex, uv + dir*rad*float(j)*u_texel).rgb;
-        float d = distance(s,src);
-        float w = exp(-d*d*55.0);
+        float dd = distance(s,src);
+        float w = exp(-dd*dd*55.0);
         sum += s*w; wsum += w;
       }
     }
@@ -233,7 +273,7 @@ void main(){
     float k = u_white*(0.6*mask+0.4);
     col = 1.0-(1.0-col)*(1.0-0.35*k);
   }
-  /* 肌トーン (+:ピンク / -:ヘルシー) */
+  /* 肌トーン */
   float tk = u_tone*(0.75*mask+0.2);
   col += vec3(0.06,-0.02,0.045)*max(tk,0.0) + vec3(0.05,0.012,-0.06)*max(-tk,0.0);
 
@@ -250,8 +290,9 @@ void main(){
 }`;
 
 /* ================= パラメータ定義 ================= */
-const ZERO = {smooth:0, white:0, tone:0, sharp:0, bright:0, contrast:0, sat:0, temp:0, vig:0, fade:0};
-const DEF  = Object.assign({}, ZERO, {smooth:0.4, white:0.18});   // 起動時のおまかせ美肌
+const ZERO = {smooth:0, white:0, tone:0, sharp:0, slim:0, small:0, eye:0,
+              bright:0, contrast:0, sat:0, temp:0, vig:0, fade:0};
+const DEF  = Object.assign({}, ZERO, {smooth:0.4, white:0.18});
 let P = Object.assign({}, DEF);
 
 const IC = {
@@ -259,6 +300,9 @@ const IC = {
   spark: '<svg viewBox="0 0 24 24"><path d="M11 4l1.7 4.3L17 10l-4.3 1.7L11 16l-1.7-4.3L5 10l4.3-1.7z"/><path d="M18.5 14.5l.8 1.9 1.9.8-1.9.8-.8 1.9-.8-1.9-1.9-.8 1.9-.8z"/></svg>',
   brush: '<svg viewBox="0 0 24 24"><circle cx="10" cy="13" r="6.5"/><path d="M8.2 15c.7.6 2.9.6 3.6 0"/><path d="M16.5 4l3.5 3.5-5.5 5.5-4 .5.5-4z"/></svg>',
   sharp: '<svg viewBox="0 0 24 24"><path d="M4 18L12 5.5 20 18z"/><path d="M12 5.5V18"/></svg>',
+  eye:   '<svg viewBox="0 0 24 24"><path d="M2.5 12C5 8 9 6.3 12 6.3s7 1.7 9.5 5.7c-2.5 4-6.5 5.7-9.5 5.7S5 16 2.5 12z"/><circle cx="12" cy="12" r="3.1"/></svg>',
+  face:  '<svg viewBox="0 0 24 24"><path d="M7 6c0-1.4 2.2-2.2 5-2.2S17 4.6 17 6c1 2.2 1 5.2 0 8.3C16.2 17 14 19.5 12 19.5S7.8 17 7 14.3c-1-3.1-1-6.1 0-8.3z"/><path d="M3.4 11l2 1-2 1"/><path d="M20.6 11l-2 1 2 1"/></svg>',
+  slim:  '<svg viewBox="0 0 24 24"><path d="M9 4.2c-1.2 3.2-1.2 7.4 0 12.6.6 2 1.8 3.4 3 3.4s2.4-1.4 3-3.4c1.2-5.2 1.2-9.4 0-12.6"/><path d="M4.5 8v8M19.5 8v8"/></svg>',
   sun:   '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.3 5.3l1.7 1.7M17 17l1.7 1.7M18.7 5.3L17 7M7 17l-1.7 1.7"/></svg>',
   cont:  '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2"/><path d="M12 3.8a8.2 8.2 0 0 1 0 16.4z" fill="currentColor" stroke="none"/></svg>',
   sat:   '<svg viewBox="0 0 24 24"><circle cx="9" cy="10" r="4.6"/><circle cx="15" cy="10" r="4.6"/><circle cx="12" cy="15" r="4.6"/></svg>',
@@ -271,7 +315,10 @@ const BEAUTY = [
   {k:'smooth', n:'肌磨き',     min:0,  max:1, ic:IC.drop},
   {k:'white',  n:'美白',       min:0,  max:1, ic:IC.spark},
   {k:'tone',   n:'肌トーン',   min:-1, max:1, ic:IC.brush},
-  {k:'sharp',  n:'シャープ',   min:0,  max:1, ic:IC.sharp}
+  {k:'sharp',  n:'シャープ',   min:0,  max:1, ic:IC.sharp},
+  {k:'eye',    n:'デカ目',     min:0,  max:1, ic:IC.eye,  shape:true},
+  {k:'small',  n:'小顔',       min:0,  max:1, ic:IC.face, shape:true},
+  {k:'slim',   n:'輪郭',       min:0,  max:1, ic:IC.slim, shape:true}
 ];
 const ADJUST = [
   {k:'bright',   n:'明るさ',       min:-1, max:1, ic:IC.sun},
@@ -302,11 +349,10 @@ const sliderZone = $('sliderZone'), slider = $('slider'),
 
 let mirror = true, facing = 'user', bypass = false;
 let timerSec = 0;
-let selected = null;        // {k,n,min,max,el}
+let selected = null;
 let curFilter = 0;
 let stream = null, photoURL = null;
 
-/* ---- 行を生成 ---- */
 function buildItems(list, rowEl){
   list.forEach(def => {
     const b = document.createElement('button');
@@ -364,7 +410,6 @@ function applyFilter(i){
   refreshDots();
 }
 
-/* ---- タブ ---- */
 const ROWS = {beauty:$('rowBeauty'), filter:$('rowFilter'), adjust:$('rowAdjust')};
 document.querySelectorAll('.tab').forEach(t => {
   t.addEventListener('click', () => {
@@ -376,7 +421,6 @@ document.querySelectorAll('.tab').forEach(t => {
   });
 });
 
-/* ---- クリア / リセット ---- */
 $('clearBtn').addEventListener('click', () => {
   const filterTabActive = ROWS.filter.style.display !== 'none';
   if(filterTabActive){ applyFilter(0); return; }
@@ -394,16 +438,12 @@ $('resetBtn').addEventListener('click', () => {
   refreshDots();
 });
 
-/* ---- 比較（長押し） ---- */
 const cmp = $('compareBtn');
-const cmpOn  = e => { e.preventDefault(); bypass = true; };
-const cmpOff = () => { bypass = false; };
-cmp.addEventListener('pointerdown', cmpOn);
-cmp.addEventListener('pointerup', cmpOff);
-cmp.addEventListener('pointercancel', cmpOff);
-cmp.addEventListener('pointerleave', cmpOff);
+cmp.addEventListener('pointerdown', e => { e.preventDefault(); bypass = true; });
+cmp.addEventListener('pointerup', () => bypass = false);
+cmp.addEventListener('pointercancel', () => bypass = false);
+cmp.addEventListener('pointerleave', () => bypass = false);
 
-/* ---- ミラー / カメラ切替 / タイマー ---- */
 $('mirrorBtn').addEventListener('click', () => {
   mirror = !mirror;
   $('mirrorBtn').classList.toggle('on', mirror);
@@ -448,8 +488,11 @@ function initGL(){
   gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
 
   ['u_tex','u_texel','u_smooth','u_white','u_tone','u_sharp','u_bright','u_contrast',
-   'u_sat','u_temp','u_vig','u_fade','u_flip','u_bypass']
+   'u_sat','u_temp','u_vig','u_fade','u_flip','u_bypass','u_aspect']
     .forEach(n => U[n] = gl.getUniformLocation(prog, n));
+  U.u_warpCD = gl.getUniformLocation(prog, 'u_warpCD[0]');
+  U.u_warpR  = gl.getUniformLocation(prog, 'u_warpR[0]');
+  U.u_eye    = gl.getUniformLocation(prog, 'u_eye[0]');
 
   const tex = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -468,6 +511,147 @@ function fitCanvas(){
   }
 }
 
+/* ================= 顔認識（MediaPipe FaceMesh）================= */
+let fm = null, faceReady = false, faceFailed = false;
+const face = { has:false, contour:[], eyes:[] };
+
+// ワープ用 uniform バッファ（毎フレーム使い回し）
+const warpCD = new Float32Array(8 * 4);
+const warpR  = new Float32Array(8);
+const warpEye = new Float32Array(2 * 4);
+
+function shapeActive(){
+  return Math.abs(P.slim) > 0.004 || Math.abs(P.small) > 0.004 || Math.abs(P.eye) > 0.004;
+}
+
+function loadFaceMesh(){
+  return new Promise(resolve => {
+    if(typeof FaceMesh !== 'undefined') return resolve(true);
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js';
+    s.crossOrigin = 'anonymous';
+    s.onload = () => resolve(true);
+    s.onerror = () => resolve(false);
+    document.head.appendChild(s);
+  });
+}
+
+async function initFace(){
+  const ok = await loadFaceMesh();
+  if(!ok || typeof FaceMesh === 'undefined'){ faceFailed = true; return; }
+  try {
+    fm = new FaceMesh({ locateFile: f => 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/' + f });
+    fm.setOptions({ maxNumFaces:1, refineLandmarks:false,
+                    minDetectionConfidence:0.5, minTrackingConfidence:0.5 });
+    fm.onResults(onResults);
+    faceReady = true;
+    detectLoop();
+  } catch(e){ faceFailed = true; }
+}
+
+async function detectLoop(){
+  if(faceReady && shapeActive() && cam.readyState >= 2 && cam.videoWidth > 0){
+    try { await fm.send({ image: cam }); } catch(e){}
+    requestAnimationFrame(detectLoop);
+  } else {
+    setTimeout(() => requestAnimationFrame(detectLoop), 200);
+  }
+}
+
+function onResults(res){
+  const lm = res.multiFaceLandmarks && res.multiFaceLandmarks[0];
+  if(!lm){ face.has = false; return; }
+
+  const aspect = cam.videoWidth / cam.videoHeight;
+  const dAsp = (ax, ay, bx, by) => Math.hypot((ax - bx) * aspect, ay - by);
+  const avg = idxs => {
+    let x = 0, y = 0;
+    idxs.forEach(i => { x += lm[i].x; y += lm[i].y; });
+    return [x / idxs.length, y / idxs.length];
+  };
+
+  const cxLine = (lm[10].x + lm[152].x + lm[6].x + lm[4].x) / 4;          // 顔の縦中心線
+  const ccx = (lm[234].x + lm[454].x + lm[152].x + lm[6].x) / 4;          // 小顔の収縮中心
+  const ccy = (lm[234].y + lm[454].y + lm[152].y + lm[6].y) / 4;
+  const faceW = dAsp(lm[234].x, lm[234].y, lm[454].x, lm[454].y);
+  const Rc = faceW * 0.28;
+  const Kslim = 0.18, Ksmall = 0.14;
+
+  // 輪郭の制御点（左右の頬・顎＋アゴ先）
+  const pts = [234, 172, 150, 454, 397, 379, 152];
+  face.contour = pts.map(i => {
+    const x = lm[i].x, y = lm[i].y;
+    return {
+      c: [x, y],
+      slim:  [(cxLine - x) * Kslim, 0],                 // 横方向に中心へ
+      small: [(ccx - x) * Ksmall, (ccy - y) * Ksmall],  // 重心へ放射状
+      r: (i === 152) ? faceW * 0.26 : Rc
+    };
+  });
+
+  // 目（上下まぶた＋目尻目頭の平均を中心に）
+  const le = avg([33, 133, 159, 145]);
+  const re = avg([362, 263, 386, 374]);
+  face.eyes = [
+    { c: le, r: dAsp(lm[33].x,  lm[33].y,  lm[133].x, lm[133].y) * 1.15 },
+    { c: re, r: dAsp(lm[362].x, lm[362].y, lm[263].x, lm[263].y) * 1.15 }
+  ];
+  face.has = true;
+}
+
+function setWarpUniforms(){
+  let n = 0;
+  if(face.has){
+    const list = face.contour;
+    for(let i = 0; i < list.length && n < 8; i++){
+      const pt = list[i];
+      const sx = pt.slim[0] * P.slim + pt.small[0] * P.small;
+      const sy = pt.slim[1] * P.slim + pt.small[1] * P.small;
+      warpCD[n*4]   = pt.c[0];
+      warpCD[n*4+1] = pt.c[1];
+      warpCD[n*4+2] = sx;
+      warpCD[n*4+3] = sy;
+      warpR[n] = pt.r;
+      n++;
+    }
+  }
+  for(let i = n; i < 8; i++){
+    warpCD[i*4] = 0; warpCD[i*4+1] = 0; warpCD[i*4+2] = 0; warpCD[i*4+3] = 0;
+    warpR[i] = 0.0001;
+  }
+  for(let i = 0; i < 2; i++){
+    if(face.has && face.eyes[i]){
+      warpEye[i*4]   = face.eyes[i].c[0];
+      warpEye[i*4+1] = face.eyes[i].c[1];
+      warpEye[i*4+2] = face.eyes[i].r;
+      warpEye[i*4+3] = Math.min(P.eye * 0.5, 0.5);
+    } else {
+      warpEye[i*4] = 0; warpEye[i*4+1] = 0; warpEye[i*4+2] = 0.0001; warpEye[i*4+3] = 0;
+    }
+  }
+  gl.uniform4fv(U.u_warpCD, warpCD);
+  gl.uniform1fv(U.u_warpR, warpR);
+  gl.uniform4fv(U.u_eye, warpEye);
+  gl.uniform1f(U.u_aspect, cv.width / Math.max(cv.height, 1));
+}
+
+let lastHint = '';
+function updateHint(){
+  const el = $('hint');
+  let msg = '';
+  if(shapeActive()){
+    if(faceFailed) msg = '顔認識を読み込めませんでした（ネット接続が必要）';
+    else if(!faceReady) msg = '顔認識を読み込み中…';
+    else if(!face.has) msg = '顔を画面に写してください';
+  }
+  if(msg !== lastHint){
+    lastHint = msg;
+    el.textContent = msg;
+    el.style.display = msg ? 'block' : 'none';
+  }
+}
+
+/* ================= 描画ループ ================= */
 function render(){
   if(cam.readyState >= 2 && cam.videoWidth){
     fitCanvas();
@@ -485,8 +669,10 @@ function render(){
     gl.uniform1f(U.u_fade, P.fade);
     gl.uniform1f(U.u_flip, mirror ? 1 : 0);
     gl.uniform1f(U.u_bypass, bypass ? 1 : 0);
+    setWarpUniforms();
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
+  updateHint();
   requestAnimationFrame(render);
 }
 
@@ -524,10 +710,11 @@ $('startBtn').addEventListener('click', async () => {
       throw {name:'SecurityError', message:'getUserMedia未対応の環境です'};
     await startCam();
     $('start').style.display = 'none';
+    initFace();
   } catch(e){ showErr(e); }
 });
 $('retryBtn').addEventListener('click', async () => {
-  try { await startCam(); $('err').style.display = 'none'; }
+  try { await startCam(); $('err').style.display = 'none'; initFace(); }
   catch(e){ showErr(e); }
 });
 
@@ -557,18 +744,11 @@ $('shutter').addEventListener('click', () => {
   c.textContent = n;
   const iv = setInterval(() => {
     n--;
-    if(n <= 0){
-      clearInterval(iv);
-      c.style.display = 'none';
-      shoot();
-    } else {
-      c.textContent = n;
-    }
+    if(n <= 0){ clearInterval(iv); c.style.display = 'none'; shoot(); }
+    else { c.textContent = n; }
   }, 1000);
 });
-$('closeModal').addEventListener('click', () => {
-  $('modal').style.display = 'none';
-});
+$('closeModal').addEventListener('click', () => { $('modal').style.display = 'none'; });
 
 /* ================= 起動 ================= */
 initGL();

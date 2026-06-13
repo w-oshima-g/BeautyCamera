@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>美肌カメラ</title>
+<style>
+  :root{ --pink1:#ff4f8b; --pink2:#ff7a59; --ink:#1c1c1e; --sub:#9a9aa0; }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;overflow:hidden;background:#000;
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;}
+  button{font-family:inherit;border:none;background:none;cursor:pointer;color:inherit}
+  #stage{position:fixed;inset:0;background:#111}
+  #glcanvas{width:100%;height:100%;object-fit:cover;display:block}
+  video{display:none}
+
+  /* ---- top bar ---- */
+  .topbar{position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;
+    align-items:center;padding:calc(env(safe-area-inset-top) + 10px) 14px 8px;z-index:5}
+  .tb-group{display:flex;gap:10px}
+  .tbtn{width:42px;height:42px;border-radius:50%;background:rgba(0,0,0,.38);
+    -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700}
+  .tbtn svg{width:21px;height:21px;stroke:#fff;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .tbtn.on{background:rgba(255,79,139,.85)}
+
+  /* ---- compare (長押しで元画像) ---- */
+  #compareBtn{position:absolute;right:14px;top:44%;width:46px;height:46px;border-radius:50%;
+    background:rgba(0,0,0,.38);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+    color:#fff;display:flex;align-items:center;justify-content:center;z-index:5;user-select:none;-webkit-user-select:none;touch-action:none}
+  #compareBtn svg{width:22px;height:22px;stroke:#fff;fill:none;stroke-width:1.8;stroke-linecap:round}
+
+  /* ---- bottom sheet ---- */
+  #sheet{position:absolute;left:0;right:0;bottom:0;background:#fff;border-radius:22px 22px 0 0;
+    padding-bottom:calc(env(safe-area-inset-bottom) + 6px);z-index:6;box-shadow:0 -6px 24px rgba(0,0,0,.25)}
+  .tabs{display:flex;justify-content:center;gap:38px;padding:14px 0 8px}
+  .tab{font-size:15px;color:var(--sub);font-weight:600;padding:2px 2px;position:relative}
+  .tab.act{color:var(--ink)}
+  .tab.act::after{content:"";position:absolute;left:8%;right:8%;bottom:-7px;height:3px;border-radius:2px;background:var(--ink)}
+
+  #sliderZone{height:52px;display:flex;align-items:center;gap:12px;padding:0 22px;visibility:hidden}
+  #sliderZone.show{visibility:visible}
+  #sliderName{font-size:12px;color:var(--sub);min-width:62px}
+  input[type=range]{flex:1;-webkit-appearance:none;appearance:none;height:4px;border-radius:2px;background:#ececf0;outline:none}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;
+    background:linear-gradient(135deg,var(--pink1),var(--pink2));box-shadow:0 2px 6px rgba(255,79,139,.5)}
+  input[type=range]::-moz-range-thumb{width:20px;height:20px;border:none;border-radius:50%;
+    background:linear-gradient(135deg,var(--pink1),var(--pink2));box-shadow:0 2px 6px rgba(255,79,139,.5)}
+  #sliderVal{font-size:13px;color:var(--ink);min-width:36px;text-align:right;font-variant-numeric:tabular-nums}
+
+  .row{display:flex;gap:6px;overflow-x:auto;padding:6px 14px 8px;scrollbar-width:none;align-items:center}
+  .row::-webkit-scrollbar{display:none}
+  .item{flex:0 0 auto;width:74px;display:flex;flex-direction:column;align-items:center;gap:5px;color:#444}
+  .item .ic{width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:1.5px solid transparent}
+  .item svg{width:29px;height:29px;stroke:#3a3a3c;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+  .item.sel .ic{border-color:var(--pink1);background:#fff0f5}
+  .item.sel svg{stroke:var(--pink1)}
+  .item .lb{font-size:11px;letter-spacing:.02em;white-space:nowrap}
+  .item .dot{width:5px;height:5px;border-radius:50%;background:transparent}
+  .item.mod .dot{background:var(--pink1)}
+
+  .chip{flex:0 0 auto;padding:9px 16px;border-radius:18px;background:#f3f3f5;font-size:13px;color:#3a3a3c;font-weight:500}
+  .chip.sel{background:linear-gradient(135deg,var(--pink1),var(--pink2));color:#fff}
+
+  .ctrls{display:flex;align-items:center;justify-content:space-between;padding:6px 36px 4px}
+  .side{font-size:11px;color:#6e6e73;display:flex;flex-direction:column;align-items:center;gap:4px;width:64px}
+  .side svg{width:22px;height:22px;stroke:#6e6e73;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+  #shutter{width:74px;height:74px;border-radius:50%;background:linear-gradient(135deg,var(--pink1),var(--pink2));
+    box-shadow:0 6px 18px rgba(255,79,139,.45), inset 0 0 0 3px rgba(255,255,255,.85);
+    display:flex;align-items:center;justify-content:center;transition:transform .1s}
+  #shutter:active{transform:scale(.92)}
+  #shutter svg{width:30px;height:30px}
+
+  /* ---- overlays ---- */
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:20;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:18px;color:#fff;text-align:center;padding:28px}
+  .bigbtn{display:inline-block;padding:14px 36px;border-radius:28px;text-decoration:none;
+    background:linear-gradient(135deg,var(--pink1),var(--pink2));color:#fff;font-size:16px;font-weight:700}
+  .ghost{padding:12px 28px;border-radius:24px;border:1.5px solid #666;color:#eee;font-size:15px;background:none}
+  .note{font-size:11.5px;color:#9a9aa0;line-height:1.8}
+  h1{font-size:22px;font-weight:700;letter-spacing:.04em}
+  #err{display:none}
+  #err .box{background:#1c1c1e;border-radius:16px;padding:18px 20px;max-width:430px;font-size:13px;line-height:2;color:#ddd;text-align:left}
+  #modal{display:none}
+  #modal img{max-width:86vw;max-height:58vh;border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.6)}
+  .mrow{display:flex;gap:14px;align-items:center}
+  #flash{position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:15;transition:opacity .12s}
+  #count{position:fixed;inset:0;display:none;align-items:center;justify-content:center;font-size:100px;
+    font-weight:700;color:#fff;text-shadow:0 2px 18px rgba(0,0,0,.55);z-index:8}
+</style>
+</head>
+<body>
+<div id="stage">
+  <video id="cam" playsinline autoplay muted></video>
+  <canvas id="glcanvas"></canvas>
+
+  <div class="topbar">
+    <div class="tb-group">
+      <button class="tbtn" id="timerBtn">OFF</button>
+    </div>
+    <div class="tb-group">
+      <button class="tbtn on" id="mirrorBtn" title="ミラー表示">
+        <svg viewBox="0 0 24 24"><path d="M12 3v18"/><path d="M8 8l-4 4 4 4"/><path d="M16 8l4 4-4 4"/></svg>
+      </button>
+      <button class="tbtn" id="flipBtn" title="カメラ切替">
+        <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 3v4.5h-4.5"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <button id="compareBtn" title="長押しで補正前を表示">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17"/></svg>
+  </button>
+
+  <div id="count"></div>
+  <div id="flash"></div>
+
+  <div id="sheet">
+    <div class="tabs">
+      <button class="tab act" data-tab="beauty">ビューティ</button>
+      <button class="tab" data-tab="filter">フィルター</button>
+      <button class="tab" data-tab="adjust">調整</button>
+    </div>
+    <div id="sliderZone">
+      <span id="sliderName"></span>
+      <input type="range" id="slider" min="0" max="100" value="0">
+      <span id="sliderVal">0</span>
+    </div>
+    <div class="row" id="rowBeauty"></div>
+    <div class="row" id="rowFilter" style="display:none"></div>
+    <div class="row" id="rowAdjust" style="display:none"></div>
+    <div class="ctrls">
+      <button class="side" id="clearBtn">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M6.5 6.5l11 11"/></svg>
+        クリア
+      </button>
+      <button id="shutter" title="撮影">
+        <svg viewBox="0 0 24 24"><path d="M9 5L7.8 7H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2.8L15 5z" fill="#fff"/><circle cx="12" cy="13" r="3.4" fill="#ff5e86"/></svg>
+      </button>
+      <button class="side" id="resetBtn">
+        <svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 1 2.3 5.7"/><path d="M4 21v-4.5h4.5"/></svg>
+        リセット
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- 起動 -->
+<div class="overlay" id="start">
+  <h1>美肌カメラ</h1>
+  <p class="note">広告なし・データはすべて端末内で処理されます</p>
+  <button class="bigbtn" id="startBtn">カメラを起動</button>
+  <p class="note">※チャット内のプレビューではカメラ権限がブロックされる場合があります。<br>その場合はこのHTMLを保存して直接開いてください。</p>
+</div>
+
+<!-- エラー -->
+<div class="overlay" id="err">
+  <h1>カメラを起動できませんでした</h1>
+  <div class="box" id="errMsg"></div>
+  <button class="ghost" id="retryBtn">もう一度試す</button>
+</div>
+
+<!-- 撮影プレビュー -->
+<div class="overlay" id="modal">
+  <img id="photo" alt="撮影した写真">
+  <div class="mrow">
+    <button class="ghost" id="closeModal">閉じる</button>
+    <a class="bigbtn" id="dlBtn" download="photo.jpg">保存する</a>
+  </div>
+  <p class="note">iPhoneは画像を長押し →「"写真"に保存」でも保存できます</p>
+</div>
+
+<script>
+'use strict';
+/* ================= WebGL シェーダー ================= */
+const VERT = `
+attribute vec2 a;
+varying vec2 v_uv;
+void main(){
+  v_uv = vec2(a.x*0.5+0.5, 0.5-a.y*0.5);
+  gl_Position = vec4(a,0.0,1.0);
+}`;
+
+const FRAG = `
+precision mediump float;
+varying vec2 v_uv;
+uniform sampler2D u_tex;
+uniform vec2 u_texel;
+uniform float u_smooth,u_white,u_tone,u_sharp;
+uniform float u_bright,u_contrast,u_sat,u_temp,u_vig,u_fade;
+uniform float u_flip,u_bypass;
+
+float luma(vec3 c){return dot(c,vec3(0.299,0.587,0.114));}
+float skinMask(vec3 c){
+  float m = smoothstep(0.0,0.08,c.r-c.g)*smoothstep(-0.02,0.06,c.g-c.b)*smoothstep(0.18,0.32,c.r);
+  m *= 1.0 - smoothstep(0.92,1.0,luma(c));
+  return clamp(m*1.7,0.0,1.0);
+}
+void main(){
+  vec2 uv = v_uv;
+  if(u_flip>0.5) uv.x = 1.0-uv.x;
+  vec3 src = texture2D(u_tex,uv).rgb;
+  if(u_bypass>0.5){ gl_FragColor = vec4(src,1.0); return; }
+  vec3 col = src;
+  float mask = skinMask(src);
+
+  /* 肌磨き: 色差で重み付けするバイラテラル風スムージング */
+  if(u_smooth>0.003){
+    float rad = mix(1.5,4.5,u_smooth);
+    vec3 sum = src; float wsum = 1.0;
+    for(int i=0;i<8;i++){
+      float a = 0.7853982*float(i);
+      vec2 dir = vec2(cos(a),sin(a));
+      for(int j=1;j<=2;j++){
+        vec3 s = texture2D(u_tex, uv + dir*rad*float(j)*u_texel).rgb;
+        float d = distance(s,src);
+        float w = exp(-d*d*55.0);
+        sum += s*w; wsum += w;
+      }
+    }
+    col = mix(col, sum/wsum, u_smooth*(0.85*mask+0.15));
+  }
+  /* シャープ */
+  if(u_sharp>0.003){
+    vec3 nb = texture2D(u_tex,uv+vec2(u_texel.x,0.0)).rgb
+            + texture2D(u_tex,uv-vec2(u_texel.x,0.0)).rgb
+            + texture2D(u_tex,uv+vec2(0.0,u_texel.y)).rgb
+            + texture2D(u_tex,uv-vec2(0.0,u_texel.y)).rgb;
+    col += (src - nb*0.25)*(u_sharp*1.4);
+  }
+  /* 美白 */
+  if(u_white>0.003){
+    float k = u_white*(0.6*mask+0.4);
+    col = 1.0-(1.0-col)*(1.0-0.35*k);
+  }
+  /* 肌トーン (+:ピンク / -:ヘルシー) */
+  float tk = u_tone*(0.75*mask+0.2);
+  col += vec3(0.06,-0.02,0.045)*max(tk,0.0) + vec3(0.05,0.012,-0.06)*max(-tk,0.0);
+
+  /* 全体調整 */
+  col.r += 0.085*u_temp; col.b -= 0.085*u_temp;
+  col += u_bright*0.25;
+  col = (col-0.5)*(1.0+u_contrast*0.9)+0.5;
+  float l = luma(col);
+  col = mix(vec3(l), col, 1.0+u_sat);
+  col = mix(col, col*0.86+vec3(0.08), u_fade);
+  vec2 p = v_uv-0.5;
+  col *= 1.0 - u_vig*smoothstep(0.35,0.95,length(p)*1.6)*0.65;
+  gl_FragColor = vec4(clamp(col,0.0,1.0),1.0);
+}`;
+
+/* ================= パラメータ定義 ================= */
+const ZERO = {smooth:0, white:0, tone:0, sharp:0, bright:0, contrast:0, sat:0, temp:0, vig:0, fade:0};
+const DEF  = Object.assign({}, ZERO, {smooth:0.4, white:0.18});   // 起動時のおまかせ美肌
+let P = Object.assign({}, DEF);
+
+const IC = {
+  drop:  '<svg viewBox="0 0 24 24"><path d="M12 3c3.4 4.5 6 7.5 6 10.3A6 6 0 1 1 6 13.3C6 10.5 8.6 7.5 12 3z"/></svg>',
+  spark: '<svg viewBox="0 0 24 24"><path d="M11 4l1.7 4.3L17 10l-4.3 1.7L11 16l-1.7-4.3L5 10l4.3-1.7z"/><path d="M18.5 14.5l.8 1.9 1.9.8-1.9.8-.8 1.9-.8-1.9-1.9-.8 1.9-.8z"/></svg>',
+  brush: '<svg viewBox="0 0 24 24"><circle cx="10" cy="13" r="6.5"/><path d="M8.2 15c.7.6 2.9.6 3.6 0"/><path d="M16.5 4l3.5 3.5-5.5 5.5-4 .5.5-4z"/></svg>',
+  sharp: '<svg viewBox="0 0 24 24"><path d="M4 18L12 5.5 20 18z"/><path d="M12 5.5V18"/></svg>',
+  sun:   '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.3 5.3l1.7 1.7M17 17l1.7 1.7M18.7 5.3L17 7M7 17l-1.7 1.7"/></svg>',
+  cont:  '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2"/><path d="M12 3.8a8.2 8.2 0 0 1 0 16.4z" fill="currentColor" stroke="none"/></svg>',
+  sat:   '<svg viewBox="0 0 24 24"><circle cx="9" cy="10" r="4.6"/><circle cx="15" cy="10" r="4.6"/><circle cx="12" cy="15" r="4.6"/></svg>',
+  temp:  '<svg viewBox="0 0 24 24"><path d="M10 5a2 2 0 1 1 4 0v8.3a4.2 4.2 0 1 1-4 0z"/><path d="M12 9.5v6"/></svg>',
+  vig:   '<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3.5"/><circle cx="12" cy="12" r="4.2"/></svg>',
+  fade:  '<svg viewBox="0 0 24 24"><path d="M4 7.5h16"/><path d="M4 12h16" stroke-opacity="0.6"/><path d="M4 16.5h16" stroke-opacity="0.3"/></svg>'
+};
+
+const BEAUTY = [
+  {k:'smooth', n:'肌磨き',     min:0,  max:1, ic:IC.drop},
+  {k:'white',  n:'美白',       min:0,  max:1, ic:IC.spark},
+  {k:'tone',   n:'肌トーン',   min:-1, max:1, ic:IC.brush},
+  {k:'sharp',  n:'シャープ',   min:0,  max:1, ic:IC.sharp}
+];
+const ADJUST = [
+  {k:'bright',   n:'明るさ',       min:-1, max:1, ic:IC.sun},
+  {k:'contrast', n:'コントラスト', min:-1, max:1, ic:IC.cont},
+  {k:'sat',      n:'彩度',         min:-1, max:1, ic:IC.sat},
+  {k:'temp',     n:'色温度',       min:-1, max:1, ic:IC.temp},
+  {k:'vig',      n:'周辺減光',     min:0,  max:1, ic:IC.vig},
+  {k:'fade',     n:'フェード',     min:0,  max:1, ic:IC.fade}
+];
+const FILTER_KEYS = ['bright','contrast','sat','temp','vig','fade','tone'];
+const FILTERS = [
+  {n:'なし',       v:{}},
+  {n:'ナチュラル', v:{bright:.08, sat:.06, temp:.05}},
+  {n:'ピュア',     v:{bright:.12, temp:-.08, sat:-.05, fade:.12, tone:.1}},
+  {n:'ピンク',     v:{tone:.5, bright:.08, sat:.08, temp:.02}},
+  {n:'クール',     v:{temp:-.45, sat:.05, contrast:.06}},
+  {n:'フィルム',   v:{contrast:-.08, sat:-.18, temp:.18, vig:.35, fade:.35}},
+  {n:'シネマ',     v:{temp:-.15, contrast:.18, sat:-.1, vig:.3, fade:.15}},
+  {n:'モノクロ',   v:{sat:-1, contrast:.15, fade:.08, vig:.2}},
+  {n:'ビビッド',   v:{sat:.35, contrast:.12, bright:.04}}
+];
+
+/* ================= DOM ================= */
+const $ = id => document.getElementById(id);
+const cam = $('cam'), cv = $('glcanvas');
+const sliderZone = $('sliderZone'), slider = $('slider'),
+      sliderName = $('sliderName'), sliderVal = $('sliderVal');
+
+let mirror = true, facing = 'user', bypass = false;
+let timerSec = 0;
+let selected = null;        // {k,n,min,max,el}
+let curFilter = 0;
+let stream = null, photoURL = null;
+
+/* ---- 行を生成 ---- */
+function buildItems(list, rowEl){
+  list.forEach(def => {
+    const b = document.createElement('button');
+    b.className = 'item';
+    b.innerHTML = '<span class="ic">' + def.ic + '</span><span class="lb">' + def.n + '</span><span class="dot"></span>';
+    b.addEventListener('click', () => selectItem(def, b));
+    rowEl.appendChild(b);
+    def.el = b;
+  });
+}
+buildItems(BEAUTY, $('rowBeauty'));
+buildItems(ADJUST, $('rowAdjust'));
+
+FILTERS.forEach((f, i) => {
+  const c = document.createElement('button');
+  c.className = 'chip' + (i === 0 ? ' sel' : '');
+  c.textContent = f.n;
+  c.addEventListener('click', () => applyFilter(i));
+  $('rowFilter').appendChild(c);
+  f.el = c;
+});
+
+function selectItem(def, el){
+  document.querySelectorAll('.item.sel').forEach(e => e.classList.remove('sel'));
+  el.classList.add('sel');
+  selected = def;
+  slider.min = def.min * 100;
+  slider.max = def.max * 100;
+  slider.value = Math.round(P[def.k] * 100);
+  sliderName.textContent = def.n;
+  updateSliderVal();
+  sliderZone.classList.add('show');
+}
+function updateSliderVal(){
+  const v = Math.round(slider.value);
+  sliderVal.textContent = (slider.min < 0 && v > 0 ? '+' : '') + v;
+}
+slider.addEventListener('input', () => {
+  if(!selected) return;
+  P[selected.k] = slider.value / 100;
+  updateSliderVal();
+  refreshDots();
+});
+function refreshDots(){
+  [...BEAUTY, ...ADJUST].forEach(def => {
+    def.el.classList.toggle('mod', Math.abs(P[def.k]) > 0.004);
+  });
+}
+function applyFilter(i){
+  curFilter = i;
+  FILTERS.forEach((f, j) => f.el.classList.toggle('sel', j === i));
+  FILTER_KEYS.forEach(k => P[k] = 0);
+  Object.assign(P, FILTERS[i].v);
+  if(selected){ slider.value = Math.round(P[selected.k] * 100); updateSliderVal(); }
+  refreshDots();
+}
+
+/* ---- タブ ---- */
+const ROWS = {beauty:$('rowBeauty'), filter:$('rowFilter'), adjust:$('rowAdjust')};
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('act'));
+    t.classList.add('act');
+    const name = t.dataset.tab;
+    for(const k in ROWS) ROWS[k].style.display = (k === name ? 'flex' : 'none');
+    sliderZone.classList.toggle('show', name !== 'filter' && !!selected);
+  });
+});
+
+/* ---- クリア / リセット ---- */
+$('clearBtn').addEventListener('click', () => {
+  const filterTabActive = ROWS.filter.style.display !== 'none';
+  if(filterTabActive){ applyFilter(0); return; }
+  if(selected){
+    P[selected.k] = 0;
+    slider.value = 0;
+    updateSliderVal();
+    refreshDots();
+  }
+});
+$('resetBtn').addEventListener('click', () => {
+  P = Object.assign({}, ZERO);
+  applyFilter(0);
+  if(selected){ slider.value = 0; updateSliderVal(); }
+  refreshDots();
+});
+
+/* ---- 比較（長押し） ---- */
+const cmp = $('compareBtn');
+const cmpOn  = e => { e.preventDefault(); bypass = true; };
+const cmpOff = () => { bypass = false; };
+cmp.addEventListener('pointerdown', cmpOn);
+cmp.addEventListener('pointerup', cmpOff);
+cmp.addEventListener('pointercancel', cmpOff);
+cmp.addEventListener('pointerleave', cmpOff);
+
+/* ---- ミラー / カメラ切替 / タイマー ---- */
+$('mirrorBtn').addEventListener('click', () => {
+  mirror = !mirror;
+  $('mirrorBtn').classList.toggle('on', mirror);
+});
+$('flipBtn').addEventListener('click', async () => {
+  facing = (facing === 'user') ? 'environment' : 'user';
+  mirror = (facing === 'user');
+  $('mirrorBtn').classList.toggle('on', mirror);
+  try { await startCam(); } catch(e){ showErr(e); }
+});
+$('timerBtn').addEventListener('click', () => {
+  timerSec = (timerSec === 0) ? 3 : (timerSec === 3 ? 5 : 0);
+  $('timerBtn').textContent = timerSec === 0 ? 'OFF' : timerSec + 's';
+  $('timerBtn').classList.toggle('on', timerSec > 0);
+});
+
+/* ================= WebGL 初期化 ================= */
+const gl = cv.getContext('webgl', {preserveDrawingBuffer: true});
+let U = {};
+function initGL(){
+  function sh(type, src){
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if(!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+      throw new Error('Shader: ' + gl.getShaderInfoLog(s));
+    return s;
+  }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, sh(gl.VERTEX_SHADER, VERT));
+  gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FRAG));
+  gl.linkProgram(prog);
+  if(!gl.getProgramParameter(prog, gl.LINK_STATUS))
+    throw new Error('Link: ' + gl.getProgramInfoLog(prog));
+  gl.useProgram(prog);
+
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, 'a');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+  ['u_tex','u_texel','u_smooth','u_white','u_tone','u_sharp','u_bright','u_contrast',
+   'u_sat','u_temp','u_vig','u_fade','u_flip','u_bypass']
+    .forEach(n => U[n] = gl.getUniformLocation(prog, n));
+
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.uniform1i(U.u_tex, 0);
+}
+
+function fitCanvas(){
+  if(cam.videoWidth && (cv.width !== cam.videoWidth || cv.height !== cam.videoHeight)){
+    cv.width = cam.videoWidth;
+    cv.height = cam.videoHeight;
+    gl.viewport(0, 0, cv.width, cv.height);
+  }
+}
+
+function render(){
+  if(cam.readyState >= 2 && cam.videoWidth){
+    fitCanvas();
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, cam);
+    gl.uniform2f(U.u_texel, 1/cv.width, 1/cv.height);
+    gl.uniform1f(U.u_smooth, P.smooth);
+    gl.uniform1f(U.u_white, P.white);
+    gl.uniform1f(U.u_tone, P.tone);
+    gl.uniform1f(U.u_sharp, P.sharp);
+    gl.uniform1f(U.u_bright, P.bright);
+    gl.uniform1f(U.u_contrast, P.contrast);
+    gl.uniform1f(U.u_sat, P.sat);
+    gl.uniform1f(U.u_temp, P.temp);
+    gl.uniform1f(U.u_vig, P.vig);
+    gl.uniform1f(U.u_fade, P.fade);
+    gl.uniform1f(U.u_flip, mirror ? 1 : 0);
+    gl.uniform1f(U.u_bypass, bypass ? 1 : 0);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+  requestAnimationFrame(render);
+}
+
+/* ================= カメラ ================= */
+async function startCam(){
+  if(stream) stream.getTracks().forEach(t => t.stop());
+  stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: facing, width: {ideal: 1280}, height: {ideal: 720} },
+    audio: false
+  });
+  cam.srcObject = stream;
+  await cam.play();
+}
+
+function showErr(e){
+  $('start').style.display = 'none';
+  $('err').style.display = 'flex';
+  let hint = '';
+  if(e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')){
+    hint = 'カメラの使用が許可されませんでした。<br>'
+      + '・チャット内プレビューでは権限がブロックされることがあります<br>'
+      + '・<b>PC</b>：このHTMLを保存し、Chromeでファイルを直接開いてください<br>'
+      + '・<b>スマホ</b>：getUserMediaはHTTPS必須のため、GitHub Pages等に置いてアクセスしてください';
+  } else if(e && e.name === 'NotFoundError'){
+    hint = 'カメラが見つかりませんでした。デバイスにカメラが接続されているか確認してください。';
+  } else {
+    hint = 'エラー: ' + (e && e.message ? e.message : e);
+  }
+  $('errMsg').innerHTML = hint;
+}
+
+$('startBtn').addEventListener('click', async () => {
+  try {
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
+      throw {name:'SecurityError', message:'getUserMedia未対応の環境です'};
+    await startCam();
+    $('start').style.display = 'none';
+  } catch(e){ showErr(e); }
+});
+$('retryBtn').addEventListener('click', async () => {
+  try { await startCam(); $('err').style.display = 'none'; }
+  catch(e){ showErr(e); }
+});
+
+/* ================= 撮影 ================= */
+function pad(n){ return String(n).padStart(2, '0'); }
+function shoot(){
+  const f = $('flash');
+  f.style.opacity = '0.9';
+  setTimeout(() => f.style.opacity = '0', 130);
+  cv.toBlob(blob => {
+    if(!blob) return;
+    if(photoURL) URL.revokeObjectURL(photoURL);
+    photoURL = URL.createObjectURL(blob);
+    $('photo').src = photoURL;
+    const d = new Date();
+    $('dlBtn').href = photoURL;
+    $('dlBtn').download = 'BeautyCam_' + d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate())
+      + '_' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds()) + '.jpg';
+    $('modal').style.display = 'flex';
+  }, 'image/jpeg', 0.93);
+}
+$('shutter').addEventListener('click', () => {
+  if(timerSec === 0){ shoot(); return; }
+  let n = timerSec;
+  const c = $('count');
+  c.style.display = 'flex';
+  c.textContent = n;
+  const iv = setInterval(() => {
+    n--;
+    if(n <= 0){
+      clearInterval(iv);
+      c.style.display = 'none';
+      shoot();
+    } else {
+      c.textContent = n;
+    }
+  }, 1000);
+});
+$('closeModal').addEventListener('click', () => {
+  $('modal').style.display = 'none';
+});
+
+/* ================= 起動 ================= */
+initGL();
+refreshDots();
+requestAnimationFrame(render);
+</script>
+</body>
+</html>

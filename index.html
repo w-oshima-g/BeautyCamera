@@ -11,7 +11,10 @@
     font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;}
   button{font-family:inherit;border:none;background:none;cursor:pointer;color:inherit}
   #stage{position:fixed;inset:0;background:#fff}
-  #glcanvas{width:100%;height:100%;object-fit:contain;object-position:center top;display:block}
+  #glcanvas{width:100%;height:100%;object-fit:contain;object-position:center top;display:block;touch-action:none}
+  #zoompill{position:absolute;left:50%;top:13%;transform:translateX(-50%);z-index:5;
+    background:rgba(0,0,0,.55);color:#fff;font-size:14px;font-weight:700;padding:6px 14px;border-radius:16px;
+    opacity:0;transition:opacity .25s;pointer-events:none;font-variant-numeric:tabular-nums}
   video{display:none}
 
   .topbar{position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;
@@ -113,6 +116,7 @@
   </button>
 
   <div id="hint"></div>
+  <div id="zoompill"></div>
   <div id="count"></div>
   <div id="flash"></div>
 
@@ -163,9 +167,9 @@
   <img id="photo" alt="撮影した写真">
   <div class="mrow">
     <button class="ghost" id="closeModal">閉じる</button>
-    <a class="bigbtn" id="dlBtn" download="photo.jpg">保存する</a>
+    <button class="bigbtn" id="saveBtn">写真に保存</button>
   </div>
-  <p class="note">iPhoneは画像を長押し →「"写真"に保存」でも保存できます</p>
+  <p class="note">「写真に保存」で共有メニューが開きます →「画像を保存」でiPhoneの写真に保存できます</p>
 </div>
 
 <script>
@@ -186,7 +190,7 @@ uniform sampler2D u_tex;
 uniform vec2 u_texel;
 uniform float u_smooth,u_white,u_tone,u_sharp;
 uniform float u_bright,u_contrast,u_sat,u_temp,u_vig,u_fade;
-uniform float u_flip,u_bypass,u_aspect;
+uniform float u_flip,u_bypass,u_aspect,u_zoom;
 uniform vec4 u_warpCD[8];   // xy=中心(uv), zw=変位(uv)
 uniform float u_warpR[8];   // 影響半径(アスペクト補正空間)
 uniform vec4 u_eye[2];      // xy=中心(uv), z=半径, w=強さ
@@ -236,6 +240,7 @@ vec2 applyWarp(vec2 uv){
 void main(){
   vec2 uv = v_uv;
   if(u_flip>0.5) uv.x = 1.0-uv.x;
+  uv = (uv - 0.5) / u_zoom + 0.5;          // デジタルズーム（中心基準）
   if(u_bypass>0.5){ gl_FragColor = vec4(texture2D(u_tex,uv).rgb,1.0); return; }
 
   uv = applyWarp(uv);
@@ -348,10 +353,11 @@ const sliderZone = $('sliderZone'), slider = $('slider'),
       sliderName = $('sliderName'), sliderVal = $('sliderVal');
 
 let mirror = true, facing = 'user', bypass = false;
+let zoom = 1;
 let timerSec = 0;
 let selected = null;
 let curFilter = 0;
-let stream = null, photoURL = null;
+let stream = null, photoURL = null, photoBlob = null, photoName = 'photo.jpg';
 
 function buildItems(list, rowEl){
   list.forEach(def => {
@@ -451,8 +457,41 @@ $('mirrorBtn').addEventListener('click', () => {
 $('flipBtn').addEventListener('click', async () => {
   facing = (facing === 'user') ? 'environment' : 'user';
   mirror = (facing === 'user');
+  zoom = 1;
   $('mirrorBtn').classList.toggle('on', mirror);
   try { await startCam(); } catch(e){ showErr(e); }
+});
+
+/* ---- ピンチでズーム / ダブルタップで等倍に戻す ---- */
+let pinchDist0 = 0, zoom0 = 1, isPinch = false, lastTapAt = 0, pillTimer = 0;
+function showZoom(){
+  const pill = $('zoompill');
+  pill.textContent = zoom.toFixed(1) + 'x';
+  pill.style.opacity = '1';
+  clearTimeout(pillTimer);
+  pillTimer = setTimeout(() => { pill.style.opacity = '0'; }, 900);
+}
+function touchDist(t){
+  return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+}
+cv.addEventListener('touchstart', e => {
+  if(e.touches.length === 2){ isPinch = true; pinchDist0 = touchDist(e.touches); zoom0 = zoom; }
+}, {passive:false});
+cv.addEventListener('touchmove', e => {
+  if(e.touches.length === 2 && pinchDist0 > 0){
+    e.preventDefault();
+    zoom = Math.min(Math.max(zoom0 * touchDist(e.touches) / pinchDist0, 1), 4);
+    showZoom();
+  }
+}, {passive:false});
+cv.addEventListener('touchend', e => {
+  if(e.touches.length < 2) pinchDist0 = 0;
+  if(e.touches.length === 0){
+    if(isPinch){ isPinch = false; return; }
+    const now = Date.now();
+    if(now - lastTapAt < 300){ zoom = 1; showZoom(); lastTapAt = 0; }
+    else lastTapAt = now;
+  }
 });
 $('timerBtn').addEventListener('click', () => {
   timerSec = (timerSec === 0) ? 3 : (timerSec === 3 ? 5 : 0);
@@ -488,7 +527,7 @@ function initGL(){
   gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
 
   ['u_tex','u_texel','u_smooth','u_white','u_tone','u_sharp','u_bright','u_contrast',
-   'u_sat','u_temp','u_vig','u_fade','u_flip','u_bypass','u_aspect']
+   'u_sat','u_temp','u_vig','u_fade','u_flip','u_bypass','u_aspect','u_zoom']
     .forEach(n => U[n] = gl.getUniformLocation(prog, n));
   U.u_warpCD = gl.getUniformLocation(prog, 'u_warpCD[0]');
   U.u_warpR  = gl.getUniformLocation(prog, 'u_warpR[0]');
@@ -669,6 +708,7 @@ function render(){
     gl.uniform1f(U.u_fade, P.fade);
     gl.uniform1f(U.u_flip, mirror ? 1 : 0);
     gl.uniform1f(U.u_bypass, bypass ? 1 : 0);
+    gl.uniform1f(U.u_zoom, zoom);
     setWarpUniforms();
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
@@ -727,11 +767,11 @@ function shoot(){
   cv.toBlob(blob => {
     if(!blob) return;
     if(photoURL) URL.revokeObjectURL(photoURL);
+    photoBlob = blob;
     photoURL = URL.createObjectURL(blob);
     $('photo').src = photoURL;
     const d = new Date();
-    $('dlBtn').href = photoURL;
-    $('dlBtn').download = 'BeautyCam_' + d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate())
+    photoName = 'BeautyCam_' + d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate())
       + '_' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds()) + '.jpg';
     $('modal').style.display = 'flex';
   }, 'image/jpeg', 0.93);
@@ -749,6 +789,29 @@ $('shutter').addEventListener('click', () => {
   }, 1000);
 });
 $('closeModal').addEventListener('click', () => { $('modal').style.display = 'none'; });
+
+async function savePhoto(){
+  if(!photoBlob) return;
+  const file = new File([photoBlob], photoName, { type: 'image/jpeg' });
+  // iOSは共有シート経由で「写真に保存」できる
+  if(navigator.canShare && navigator.canShare({ files: [file] })){
+    try {
+      await navigator.share({ files: [file], title: '美肌カメラ' });
+      return;
+    } catch(err){
+      if(err && err.name === 'AbortError') return;   // ユーザーがキャンセル
+      // それ以外は下のダウンロードへフォールバック
+    }
+  }
+  // 非対応環境（PC等）はファイルダウンロード
+  const a = document.createElement('a');
+  a.href = photoURL;
+  a.download = photoName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+$('saveBtn').addEventListener('click', savePhoto);
 
 /* ================= 起動 ================= */
 initGL();

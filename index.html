@@ -10,8 +10,9 @@
   html,body{height:100%;overflow:hidden;background:#000;
     font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;}
   button{font-family:inherit;border:none;background:none;cursor:pointer;color:inherit}
-  #stage{position:fixed;inset:0;background:#fff}
-  #glcanvas{width:100%;height:100%;object-fit:contain;object-position:center top;display:block;touch-action:none}
+  #stage{position:fixed;inset:0;background:#000;display:flex;flex-direction:column}
+  #camwrap{position:relative;flex:1 1 auto;min-height:0;overflow:hidden;background:#000}
+  #glcanvas{width:100%;height:100%;display:block;touch-action:none}
   #zoompill{position:absolute;left:50%;top:13%;transform:translateX(-50%);z-index:5;
     background:rgba(0,0,0,.55);color:#fff;font-size:14px;font-weight:700;padding:6px 14px;border-radius:16px;
     opacity:0;transition:opacity .25s;pointer-events:none;font-variant-numeric:tabular-nums}
@@ -35,7 +36,7 @@
     background:rgba(0,0,0,.62);color:#fff;font-size:12.5px;padding:8px 16px;border-radius:18px;
     display:none;white-space:nowrap;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
 
-  #sheet{position:absolute;left:0;right:0;bottom:0;background:#fff;border-radius:22px 22px 0 0;
+  #sheet{flex:0 0 auto;background:#fff;border-radius:22px 22px 0 0;
     padding-bottom:calc(env(safe-area-inset-bottom) + 6px);z-index:6;box-shadow:0 -6px 24px rgba(0,0,0,.25)}
   .tabs{display:flex;justify-content:center;gap:38px;padding:14px 0 8px}
   .tab{font-size:15px;color:var(--sub);font-weight:600;padding:2px 2px;position:relative}
@@ -95,28 +96,31 @@
 <body>
 <div id="stage">
   <video id="cam" playsinline autoplay muted></video>
-  <canvas id="glcanvas"></canvas>
+  <div id="camwrap">
+    <canvas id="glcanvas"></canvas>
 
-  <div class="topbar">
-    <div class="tb-group">
-      <button class="tbtn" id="timerBtn">OFF</button>
+    <div class="topbar">
+      <div class="tb-group">
+        <button class="tbtn" id="timerBtn">OFF</button>
+      </div>
+      <div class="tb-group">
+        <button class="tbtn on" id="mirrorBtn" title="ミラー表示">
+          <svg viewBox="0 0 24 24"><path d="M12 3v18"/><path d="M8 8l-4 4 4 4"/><path d="M16 8l4 4-4 4"/></svg>
+        </button>
+        <button class="tbtn" id="flipBtn" title="カメラ切替">
+          <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 3v4.5h-4.5"/></svg>
+        </button>
+      </div>
     </div>
-    <div class="tb-group">
-      <button class="tbtn on" id="mirrorBtn" title="ミラー表示">
-        <svg viewBox="0 0 24 24"><path d="M12 3v18"/><path d="M8 8l-4 4 4 4"/><path d="M16 8l4 4-4 4"/></svg>
-      </button>
-      <button class="tbtn" id="flipBtn" title="カメラ切替">
-        <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 3v4.5h-4.5"/></svg>
-      </button>
-    </div>
+
+    <button id="compareBtn" title="長押しで補正前を表示">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17"/></svg>
+    </button>
+
+    <div id="hint"></div>
+    <div id="zoompill"></div>
   </div>
 
-  <button id="compareBtn" title="長押しで補正前を表示">
-    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17"/></svg>
-  </button>
-
-  <div id="hint"></div>
-  <div id="zoompill"></div>
   <div id="count"></div>
   <div id="flash"></div>
 
@@ -191,6 +195,7 @@ uniform vec2 u_texel;
 uniform float u_smooth,u_white,u_tone,u_sharp;
 uniform float u_bright,u_contrast,u_sat,u_temp,u_vig,u_fade;
 uniform float u_flip,u_bypass,u_aspect,u_zoom;
+uniform vec2 u_cover;       // 画面アスペクトに合わせた切り抜き率
 uniform vec4 u_warpCD[8];   // xy=中心(uv), zw=変位(uv)
 uniform float u_warpR[8];   // 影響半径(アスペクト補正空間)
 uniform vec4 u_eye[2];      // xy=中心(uv), z=半径, w=強さ
@@ -240,7 +245,7 @@ vec2 applyWarp(vec2 uv){
 void main(){
   vec2 uv = v_uv;
   if(u_flip>0.5) uv.x = 1.0-uv.x;
-  uv = (uv - 0.5) / u_zoom + 0.5;          // デジタルズーム（中心基準）
+  uv = 0.5 + (uv - 0.5) * u_cover / u_zoom;   // 画面に合わせて切り抜き＋デジタルズーム
   if(u_bypass>0.5){ gl_FragColor = vec4(texture2D(u_tex,uv).rgb,1.0); return; }
 
   uv = applyWarp(uv);
@@ -527,7 +532,7 @@ function initGL(){
   gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
 
   ['u_tex','u_texel','u_smooth','u_white','u_tone','u_sharp','u_bright','u_contrast',
-   'u_sat','u_temp','u_vig','u_fade','u_flip','u_bypass','u_aspect','u_zoom']
+   'u_sat','u_temp','u_vig','u_fade','u_flip','u_bypass','u_aspect','u_zoom','u_cover']
     .forEach(n => U[n] = gl.getUniformLocation(prog, n));
   U.u_warpCD = gl.getUniformLocation(prog, 'u_warpCD[0]');
   U.u_warpR  = gl.getUniformLocation(prog, 'u_warpR[0]');
@@ -542,13 +547,20 @@ function initGL(){
   gl.uniform1i(U.u_tex, 0);
 }
 
-function fitCanvas(){
-  if(cam.videoWidth && (cv.width !== cam.videoWidth || cv.height !== cam.videoHeight)){
-    cv.width = cam.videoWidth;
-    cv.height = cam.videoHeight;
+const camwrap = $('camwrap');
+function resizeCanvas(){
+  const r = camwrap.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.max(2, Math.round(r.width * dpr));
+  const h = Math.max(2, Math.round(r.height * dpr));
+  if(cv.width !== w || cv.height !== h){
+    cv.width = w;
+    cv.height = h;
     gl.viewport(0, 0, cv.width, cv.height);
   }
 }
+window.addEventListener('resize', resizeCanvas);
+window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 300));
 
 /* ================= 顔認識（MediaPipe FaceMesh）================= */
 let fm = null, faceReady = false, faceFailed = false;
@@ -671,7 +683,7 @@ function setWarpUniforms(){
   gl.uniform4fv(U.u_warpCD, warpCD);
   gl.uniform1fv(U.u_warpR, warpR);
   gl.uniform4fv(U.u_eye, warpEye);
-  gl.uniform1f(U.u_aspect, cv.width / Math.max(cv.height, 1));
+  gl.uniform1f(U.u_aspect, cam.videoWidth / Math.max(cam.videoHeight, 1));
 }
 
 let lastHint = '';
@@ -693,9 +705,15 @@ function updateHint(){
 /* ================= 描画ループ ================= */
 function render(){
   if(cam.readyState >= 2 && cam.videoWidth){
-    fitCanvas();
+    resizeCanvas();
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, cam);
-    gl.uniform2f(U.u_texel, 1/cv.width, 1/cv.height);
+    // 映像バッファ(横長/縦長どちらでも)を画面アスペクトにcoverで合わせる切り抜き率
+    const vidA = cam.videoWidth / cam.videoHeight;
+    const canvA = cv.width / Math.max(cv.height, 1);
+    let cvx, cvy;
+    if(vidA > canvA){ cvx = canvA / vidA; cvy = 1; } else { cvx = 1; cvy = vidA / canvA; }
+    gl.uniform2f(U.u_cover, cvx, cvy);
+    gl.uniform2f(U.u_texel, 1/cam.videoWidth, 1/cam.videoHeight);
     gl.uniform1f(U.u_smooth, P.smooth);
     gl.uniform1f(U.u_white, P.white);
     gl.uniform1f(U.u_tone, P.tone);
